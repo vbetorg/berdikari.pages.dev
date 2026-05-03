@@ -9,6 +9,9 @@ export async function onRequest(context) {
     const match = path.match(/^\/artikel\/(.+)$/);
     const slug = match ? match[1] : null;
 
+    const page = parseInt(url.searchParams.get("page") || "1");
+    const perPage = 12;
+
     // ======================
     // FETCH DATA
     // ======================
@@ -27,116 +30,147 @@ export async function onRequest(context) {
     // SITEMAP
     // ======================
     if (path === "/sitemap.xml") {
+
       const items = data.map(item => {
-        let s = item.slug || item.id;
-        if (typeof s === "string") {
-          s = s.toLowerCase().replace(/\s+/g, "-");
-        }
+        let s = (item.slug || item.id || "")
+          .toString()
+          .toLowerCase()
+          .replace(/\s+/g, "-");
+
         return `<url><loc>${DOMAIN}/artikel/${s}</loc></url>`;
       }).join("");
 
-      return new Response(`<?xml version="1.0" encoding="UTF-8"?>
+      const xml = `<?xml version="1.0" encoding="UTF-8"?>
       <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
         <url><loc>${DOMAIN}/</loc></url>
         ${items}
-      </urlset>`, {
+      </urlset>`;
+
+      return new Response(xml, {
         headers: { "content-type": "application/xml" },
       });
     }
 
     // ======================
-    // HOMEPAGE
+    // HOMEPAGE AMP + PAGINATION
     // ======================
     if (!slug) {
 
-      let cards = "";
+      const start = (page - 1) * perPage;
+      const paginated = data.slice(start, start + perPage);
 
-      data.forEach(item => {
-        let s = item.slug || item.id;
-        if (typeof s === "string") {
-          s = s.toLowerCase().replace(/\s+/g, "-");
-        }
+      let items = "";
+
+      paginated.forEach(item => {
+        let s = (item.slug || item.id || "")
+          .toString()
+          .toLowerCase()
+          .replace(/\s+/g, "-");
 
         const title = item.title || "Artikel";
-        const desc = (item.meta_description || "").substring(0, 120);
+        const desc = (item.meta_description || "").substring(0, 100);
 
-        // IMAGE FIX
         const image = item.image && item.image.trim() !== ""
           ? item.image
           : "/default.png";
 
-        cards += `
-          <a href="/artikel/${s}" class="card">
-            <img src="${image}" alt="${title}" loading="lazy">
-            <h2>${title}</h2>
-            <p>${desc}</p>
-          </a>
+        items += `
+          <div class="card">
+            <a href="/artikel/${s}">
+              <amp-img 
+                src="${image}" 
+                width="400" 
+                height="200" 
+                layout="responsive"
+                alt="${title}">
+              </amp-img>
+              <h2>${title}</h2>
+              <p>${desc}</p>
+            </a>
+          </div>
         `;
       });
 
+      const totalPages = Math.ceil(data.length / perPage);
+
+      let pagination = `<div class="pagination">`;
+      for (let i = 1; i <= totalPages; i++) {
+        pagination += `<a href="/?page=${i}" ${i === page ? 'style="font-weight:bold"' : ''}>${i}</a>`;
+      }
+      pagination += `</div>`;
+
+      const jsonLd = {
+        "@context": "https://schema.org",
+        "@type": "CollectionPage",
+        "name": "Blog AMP",
+        "url": `${DOMAIN}/?page=${page}`
+      };
+
       return new Response(`
-      <html>
-      <head>
-        <title>Blog Artikel</title>
+<!doctype html>
+<html amp>
+<head>
+  <meta charset="utf-8">
+  <title>Blog AMP - Page ${page}</title>
 
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <meta name="description" content="Kumpulan artikel terbaru">
-        <meta name="robots" content="index, follow">
+  <link rel="canonical" href="${DOMAIN}/?page=${page}">
+  <link rel="sitemap" type="application/xml" href="/sitemap.xml">
 
-        <style>
-          body {margin:0;font-family:sans-serif;background:#f5f5f5;}
-          header {background:#111;color:#fff;padding:20px;text-align:center;}
-          .container {max-width:1100px;margin:auto;padding:20px;}
-          .grid {
-            display:grid;
-            grid-template-columns:repeat(auto-fill,minmax(250px,1fr));
-            gap:20px;
-          }
-          .card {
-            background:#fff;
-            border-radius:10px;
-            padding:15px;
-            text-decoration:none;
-            color:#000;
-            box-shadow:0 5px 15px rgba(0,0,0,0.05);
-          }
-          .card img {
-            width:100%;
-            height:150px;
-            object-fit:cover;
-            border-radius:8px;
-            margin-bottom:10px;
-          }
-        </style>
-      </head>
+  <meta name="viewport" content="width=device-width,minimum-scale=1">
+  <meta name="description" content="Kumpulan artikel terbaru halaman ${page}">
+  <meta name="robots" content="index, follow">
 
-      <body>
-        <header>
-          <h1>Blog Artikel</h1>
-        </header>
+  <!-- OG -->
+  <meta property="og:title" content="Blog AMP - Page ${page}">
+  <meta property="og:description" content="Kumpulan artikel terbaru halaman ${page}">
+  <meta property="og:url" content="${DOMAIN}/?page=${page}">
+  <meta property="og:type" content="website">
 
-        <div class="container">
-          <div class="grid">
-            ${cards}
-          </div>
-        </div>
-      </body>
-      </html>
+  <!-- AMP -->
+  <script async src="https://cdn.ampproject.org/v0.js"></script>
+
+  <style amp-boilerplate>body{visibility:hidden}</style>
+  <noscript><style amp-boilerplate>body{visibility:visible}</style></noscript>
+
+  <style amp-custom>
+    body{font-family:sans-serif;background:#f5f5f5;padding:10px;}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+    .card{background:#fff;padding:10px;border-radius:8px;}
+    h2{font-size:16px;}
+    .pagination{text-align:center;margin-top:20px;}
+  </style>
+
+  <script type="application/ld+json">
+    ${JSON.stringify(jsonLd)}
+  </script>
+</head>
+
+<body>
+
+<h1>Blog AMP</h1>
+
+<div class="grid">
+  ${items}
+</div>
+
+${pagination}
+
+</body>
+</html>
       `, {
         headers: { "content-type": "text/html;charset=UTF-8" },
       });
     }
 
     // ======================
-    // ARTIKEL
+    // ARTIKEL AMP
     // ======================
     const artikel = data.find(item => {
-      let s = item.slug || item.id;
-      if (typeof s === "string") {
-        s = s.toLowerCase().replace(/\s+/g, "-");
-      }
-      return s == slug;
+      let s = (item.slug || item.id || "")
+        .toString()
+        .toLowerCase()
+        .replace(/\s+/g, "-");
+      return s === slug;
     });
 
     if (!artikel) {
@@ -144,29 +178,15 @@ export async function onRequest(context) {
     }
 
     const title = artikel.title || "Artikel";
-    const content = artikel.content || "<p>Tidak ada konten</p>";
+    const content = artikel.content || "";
     const desc = artikel.meta_description || content.substring(0, 140);
-
-    const fullUrl = `${DOMAIN}/artikel/${slug}`;
 
     const image = artikel.image && artikel.image.trim() !== ""
       ? artikel.image
       : "/default.png";
 
-    // RELATED
-    let related = "<h3>Artikel Terkait</h3><ul>";
+    const fullUrl = `https://acc.injector.workers.dev/artikel/${slug}`;
 
-    data.slice(0,5).forEach(item => {
-      let s = item.slug || item.id;
-      if (typeof s === "string") {
-        s = s.toLowerCase().replace(/\s+/g, "-");
-      }
-      related += `<li><a href="/artikel/${s}">${item.title || "Artikel"}</a></li>`;
-    });
-
-    related += "</ul>";
-
-    // JSON-LD
     const jsonLd = {
       "@context": "https://schema.org",
       "@type": "Article",
@@ -185,54 +205,68 @@ export async function onRequest(context) {
     };
 
     return new Response(`
-    <html>
-    <head>
-      <title>${title}</title>
+<!doctype html>
+<html amp>
+<head>
+  <meta charset="utf-8">
+  <title>${title}</title>
 
-      <!-- BASIC -->
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <meta name="description" content="${desc}">
-      <meta name="robots" content="index, follow">
-      <link rel="canonical" href="${fullUrl}">
+  <link rel="canonical" href="${fullUrl}">
+  <link rel="sitemap" type="application/xml" href="/sitemap.xml">
 
-      <!-- OG -->
-      <meta property="og:title" content="${title}">
-      <meta property="og:description" content="${desc}">
-      <meta property="og:image" content="${image}">
-      <meta property="og:url" content="${fullUrl}">
-      <meta property="og:type" content="article">
+  <meta name="viewport" content="width=device-width,minimum-scale=1">
+  <meta name="description" content="${desc}">
+  <meta name="robots" content="index, follow">
 
-      <!-- TWITTER -->
-      <meta name="twitter:card" content="summary_large_image">
-      <meta name="twitter:title" content="${title}">
-      <meta name="twitter:description" content="${desc}">
-      <meta name="twitter:image" content="${image}">
+  <!-- OG -->
+  <meta property="og:title" content="${title}">
+  <meta property="og:description" content="${desc}">
+  <meta property="og:image" content="${image}">
+  <meta property="og:type" content="article">
 
-      <!-- JSON -->
-      <script type="application/ld+json">
-        ${JSON.stringify(jsonLd)}
-      </script>
+  <!-- TWITTER -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="${title}">
+  <meta name="twitter:description" content="${desc}">
+  <meta name="twitter:image" content="${image}">
 
-      <style>
-        body {font-family:sans-serif;max-width:800px;margin:auto;padding:20px;}
-        img {width:100%;border-radius:10px;margin-bottom:15px;}
-      </style>
-    </head>
+  <!-- AMP -->
+  <script async src="https://cdn.ampproject.org/v0.js"></script>
 
-    <body>
-      <img src="${image}" alt="${title}" loading="lazy">
+  <style amp-boilerplate>body{visibility:hidden}</style>
+  <noscript><style amp-boilerplate>body{visibility:visible}</style></noscript>
 
-      <h1>${title}</h1>
-      <p><i>${desc}</i></p>
+  <style amp-custom>
+    body{font-family:sans-serif;padding:15px;}
+    h1{font-size:22px;}
+    p{line-height:1.6;}
+  </style>
 
-      ${content}
+  <script type="application/ld+json">
+    ${JSON.stringify(jsonLd)}
+  </script>
+</head>
 
-      ${related}
+<body>
 
-      <br><a href="/">← Kembali</a>
-    </body>
-    </html>
+<h1>${title}</h1>
+
+<amp-img 
+  src="${image}" 
+  width="800" 
+  height="400" 
+  layout="responsive"
+  alt="${title}">
+</amp-img>
+
+<p>${desc}</p>
+
+${content}
+
+<br><a href="${fullUrl}">Versi Normal</a>
+
+</body>
+</html>
     `, {
       headers: { "content-type": "text/html;charset=UTF-8" },
     });
